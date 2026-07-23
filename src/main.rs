@@ -1,11 +1,23 @@
+use axum::{
+    extract::State,
+    routing::{get, post},
+    Router,
+};
+use serde::Serialize;
+use sqlx::PgPool;
+use std::collections::HashMap;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use axum::{Router, routing::{get,post}}
-use sqlx::PgPool;
 
 #[derive(Clone)]
-struct AppState{
-    db:PgPool,
+struct AppState {
+    db: PgPool,
+}
+
+#[derive(Serialize)]
+struct SqlResponse {
+    table: String,
+    data: HashMap<String, String>,
 }
 
 #[tokio::main]
@@ -13,22 +25,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
     println!("Listening on 127.0.0.1:8080");
 
-    loop {
-        let (mut socket, addr) = listener.accept().await?;
-        println!("Accepted connection from {addr}");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(5)
+        .connect("")
+        .await?;
 
-        tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
-            match socket.read(&mut buf).await {
-                Ok(0) => return, // connection closed
-                Ok(n) => {
-                    println!("Read {n} bytes: {:?}", String::from_utf8_lossy(&buf[..n]));
-                    if let Err(e) = socket.write_all(b"Hello, world!\n").await {
-                        eprintln!("write error: {e}");
-                    }
-                }
-                Err(e) => eprintln!("read error: {e}"),
-            }
-        });
-    }
+    let state = AppState { db: pool };
+
+    let route = Router::new()
+        .route("/nba-bet/team", get(team_data))
+        .route("/nba-bet/player", get(player_data))
+        .with_state(state);
+    axum::serve(listener, route).await.unwrap();
+
+    Ok(())
 }
+
+async fn team_data(State(state): State<AppState>) {}
+
+async fn player_data() {}
