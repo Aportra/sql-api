@@ -2,7 +2,9 @@ use axum::{
     extract::State,
     routing::{get, post},
     Router,
+    Json
 };
+use axum::http::StatusCode;
 use serde::Serialize;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -14,10 +16,9 @@ struct AppState {
     db: PgPool,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize,sqlx::FromRow)]
 struct SqlResponse {
-    table: String,
-    data: HashMap<String, String>,
+    team: String
 }
 
 #[tokio::main]
@@ -41,6 +42,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn team_data(State(state): State<AppState>) {}
+
+async fn team_data(State(state): State<AppState>)->Result<Json<Vec<SqlResponse>>,StatusCode> {
+    let results: Vec<SqlResponse> = sqlx::query_as::<_,SqlResponse>("select team from analytics.clean_team_data").fetch_all(&state.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(results))
+}
 
 async fn player_data() {}
