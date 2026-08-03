@@ -1,13 +1,16 @@
+use axum::http::StatusCode;
 use axum::{
     extract::State,
     routing::{get, post},
-    Router,
-    Json
+    Json, Router,
 };
-use axum::http::StatusCode;
-use serde::Serialize;
+
+use chrono::NaiveDateTime;
+use serde::{Deserialize, Serialize};
+use serde_yaml;
 use sqlx::PgPool;
-use std::collections::HashMap;
+use std::io::read_to_string;
+use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -16,9 +19,60 @@ struct AppState {
     db: PgPool,
 }
 
-#[derive(serde::Serialize,sqlx::FromRow)]
-struct SqlResponse {
-    team: String
+#[derive(serde::Serialize, sqlx::FromRow, Debug)]
+struct TeamResponse {
+    team_name: String,
+    team_id: i64,
+    game_date: NaiveDateTime,
+    matchup: String,
+    game_id: String,
+    wl: String,
+    fga: i64,
+    fgm: i64,
+    fg_pct: f64,
+    fgthree_m: i64,
+    fgthree_a: i64,
+    fgthree__pct: f64,
+    oreb: i64,
+    dreb: i64,
+    tov: i64,
+    ftm: i64,
+    fta: i64,
+    ft_pct: f64,
+}
+
+#[derive(serde::Serialize, sqlx::FromRow, Debug)]
+struct PlayerResponse {
+    player: String,
+    min: f64,
+    team: String,
+    game_id: String,
+    game_date: NaiveDateTime,
+    fgm: f64,
+    fga: f64,
+    fg_pct: f64,
+    fgthree_m: f64,
+    fgthree_a: f64,
+    fgthree__pct: f64,
+    ftm: f64,
+    fta: f64,
+    ft_pct: f64,
+    oreb: f64,
+    dreb: f64,
+    ast: f64,
+    stl: f64,
+    blk: f64,
+    turnovers: f64,
+    plus_minus: f64,
+}
+
+#[derive(Deserialize)]
+struct Config {
+    username: String,
+    password: String,
+    host: String,
+    port: u16,
+    db: String,
 }
 
 #[tokio::main]
@@ -26,9 +80,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
     println!("Listening on 127.0.0.1:8080");
 
+    let mut file = fs::File::open("config.yaml").await?;
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).await?;
+
+    let config: Config = serde_yaml::from_str(&contents)?;
+
+    let connection = sqlx::postgres::PgConnectOptions::new()
+        .host(&config.host)
+        .port(config.port)
+        .username(&config.username)
+        .password(&config.password)
+        .database(&config.db);
+
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
-        .connect("")
+        .connect_with(connection)
         .await?;
 
     let state = AppState { db: pool };
@@ -42,11 +110,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-
-async fn team_data(State(state): State<AppState>)->Result<Json<Vec<SqlResponse>>,StatusCode> {
-    let results: Vec<SqlResponse> = sqlx::query_as::<_,SqlResponse>("select team from analytics.clean_team_data").fetch_all(&state.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
+async fn team_data(State(state): State<AppState>) -> Result<Json<Vec<TeamResponse>>, StatusCode> {
+    let results: Vec<TeamResponse> = sqlx::query_as::<_, TeamResponse>(
+        "
+        select 
+            team_name,
+            team_id,
+            game_date,
+            matchup,
+            game_id,
+            wl,
+            fga,
+            fgm,
+            fg_pct,
+            fgthree_m,
+            fgthree_a,
+            fgthree__pct,
+            oreb,
+            dreb,
+            tov,
+            ftm,
+            fta,
+            ft_pct 
+        from clean_team_data",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        eprintln!("Team error: {e:?}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     Ok(Json(results))
 }
 
-async fn player_data() {}
+async fn player_data(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PlayerResponse>>, StatusCode> {
+    let results: Vec<PlayerResponse> = sqlx::query_as::<_, PlayerResponse>(
+        "
+select
+player,
+min,
+team,
+game_id,
+game_date,
+fgm,
+fga,
+fg_pct,
+fgthree_m,
+fgthree_a,
+fgthree__pct,
+ftm,
+fta,
+ft_pct,
+oreb,
+dreb,
+ast,
+stl,
+blk,
+turnovers,
+plus_minus
+from clean_player_data
+",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        eprintln!("player error: {e:?}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(results))
+}
