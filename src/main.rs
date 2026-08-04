@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
 use axum::{
+    extract::Query,
     extract::State,
     routing::{get, post},
     Json, Router,
@@ -17,6 +18,13 @@ use tokio::net::TcpListener;
 #[derive(Clone)]
 struct AppState {
     db: PgPool,
+}
+
+#[derive(Deserialize)]
+struct OptParams {
+    player: Option<String>,
+    certain_game: Option<String>,
+    limit_past_games: Option<i64>,
 }
 
 #[derive(serde::Serialize, sqlx::FromRow, Debug)]
@@ -145,14 +153,26 @@ async fn team_data(State(state): State<AppState>) -> Result<Json<Vec<TeamRespons
 
 async fn player_data(
     State(state): State<AppState>,
+    Query(param): Query<OptParams>,
 ) -> Result<Json<Vec<PlayerResponse>>, StatusCode> {
+    let limit = param.limit_past_games.unwrap_or(3);
+    let player = param.player.unwrap_or("".to_string());
+    let certain_game = param.certain_game.unwrap_or("".to_string());
+
     let results: Vec<PlayerResponse> = sqlx::query_as::<_, PlayerResponse>(
         "
+with last_n as(
+    select
+    game_id,
+    player,
+    row_number() over(partition by player order by game_date desc) as rn
+from clean_player_data
+)
 select
-player,
+clean_player_data.player,
 min,
 team,
-game_id,
+clean_player_data.game_id,
 game_date,
 fgm,
 fga,
@@ -171,8 +191,17 @@ blk,
 turnovers,
 plus_minus
 from clean_player_data
+inner join last_n 
+    on last_n.player = clean_player_data.player
+    and rn <= $1
+    and last_n.game_id = clean_player_data.game_id
+where ($2 = '' or clean_player_data.player=$2) and
+    ($3 = '' or clean_player_data.game_id=$3)
 ",
     )
+    .bind(limit)
+    .bind(player)
+    .bind(certain_game)
     .fetch_all(&state.db)
     .await
     .map_err(|e| {
