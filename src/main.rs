@@ -79,25 +79,24 @@ struct Config {
     username: String,
     password: String,
     host: String,
-    port: u16,
+    port: String,
+    db_port: u16,
     db: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    println!("Listening on 127.0.0.1:8080");
-
-    let mut file = fs::File::open("config.yaml").await?;
-
     let mut contents = String::new();
+    let mut file = fs::File::open("config.yaml").await?;
     file.read_to_string(&mut contents).await?;
 
     let config: Config = serde_yaml::from_str(&contents)?;
+    let listener = TcpListener::bind(format!("{}:{}", &config.host, &config.port)).await?;
+    println!("Listening on {}:{}", &config.host, &config.port);
 
     let connection = sqlx::postgres::PgConnectOptions::new()
         .host(&config.host)
-        .port(config.port)
+        .port(config.db_port)
         .username(&config.username)
         .password(&config.password)
         .database(&config.db);
